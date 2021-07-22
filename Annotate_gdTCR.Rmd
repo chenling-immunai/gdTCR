@@ -1,0 +1,171 @@
+---
+title: "Comparing IGBlast and CellRanger Gamma-Delta TCR"
+output: html_notebook
+---
+# Preparation 
+### Import all packages and set up working directory
+```{r setup,message=FALSE, warning=FALSE, error=FALSE,results='hide',fig.keep='all'}
+library(tidyverse)
+library(dplyr)
+knitr::opts_knit$set(progress = TRUE, verbose = TRUE, root.dir = '/home/local/')
+```
+### Load Data
+```{r,message=FALSE, warning=FALSE, error=FALSE,results='hide',fig.keep='all'}
+igblast <-  read_delim('Code/gamma-delta/results/all_contig_igblast_db-pass.tsv',"\t")
+names(igblast)
+igblast <- igblast %>% select(sequence_id, sequence, v_call, d_call, j_call, v_score, v_identity, d_score, d_identity, j_score, j_identity, stop_codon, vj_in_frame, locus, productive, cdr3) %>% rename_with(function(x) paste0(x,".igblast"))
+cr3 <- read_csv('Code/gamma-delta/results/cellranger3.1_outs/all_contig_annotations.csv')
+cr5 <- read_csv('Code/gamma-delta/results/cellranger5_outs/all_contig_annotations.csv')
+vquest <- read_delim('Code/gamma-delta/results/vquest_airr.tsv',"\t")
+vquest <- vquest %>% mutate(Query = str_sub(sequence_id, 0, -3)) %>% select(Query, v_call, d_call, j_call, v_score, v_identity, d_score, d_identity, j_score, j_identity, stop_codon, vj_in_frame, locus, productive)  %>% rename_with(function(x) paste0(x,".vquest"))
+c_blast = read_delim('Code/gamma-delta/results/all_contig.TCR_constant.tab', col_names = F, delim='\t') 
+c_blast = constant %>% select(X1, X2,X3) %>% rename('contig_id'='X1','c_match'='X2','c_identity'='X3') %>% separate(c_match, into=c('c_allele', 'c_blast', 'c_species'),sep="\\|") %>% distinct() 
+```
+### Parse the type names so that they are comparable
+```{r}
+joined <- full_join(igblast, vquest, by=c("sequence_id.igblast"="Query.vquest"))
+# joined %>% filter(sequence_id=='CTCACACAGAGGTTAT-1_contig_1') %>% select(v_call.igblast, v_call.vquest)
+joined <- joined %>% 
+  mutate(v_call.vquest = str_replace_all(v_call.vquest, 'Homsap', '')) %>% 
+  mutate(v_call.vquest = str_replace_all(v_call.vquest, 'ORF', '')) %>% 
+  mutate(v_call.vquest = str_replace_all(v_call.vquest, 'F', '')) %>% 
+  mutate(v_call.vquest = str_replace_all(v_call.vquest, ', or', ',')) %>% 
+  mutate(v_call.vquest = str_replace_all(v_call.vquest, 'or', ',')) %>% 
+  mutate(v_call.vquest = str_replace_all(v_call.vquest, fixed('()'), '')) %>% 
+  mutate(v_call.vquest = str_replace_all(v_call.vquest, ' ', ''))
+joined <- joined %>% 
+  mutate(d_call.vquest = str_replace_all(d_call.vquest, 'Homsap', '')) %>% 
+  mutate(d_call.vquest = str_replace_all(d_call.vquest, 'ORF', '')) %>% 
+  mutate(d_call.vquest = str_replace_all(d_call.vquest, 'F', '')) %>% 
+  mutate(d_call.vquest = str_replace_all(d_call.vquest, 'or', '')) %>% 
+  mutate(d_call.vquest = str_replace_all(d_call.vquest, ' ', '')) %>% 
+  mutate(d_call.vquest = str_replace_all(d_call.vquest, fixed('_'), '')) 
+joined <- joined %>% 
+  mutate(j_call.vquest = str_replace_all(j_call.vquest, 'Homsap', '')) %>% 
+  mutate(j_call.vquest = str_replace_all(j_call.vquest, 'ORF', '')) %>% 
+  mutate(j_call.vquest = str_replace_all(j_call.vquest, 'F', '')) %>% 
+  mutate(j_call.vquest = str_replace_all(j_call.vquest, 'or', '')) %>% 
+  mutate(j_call.vquest = str_replace_all(j_call.vquest, ' ', ''))
+
+```
+
+# VQuest and IGMT
+Heatmap shows that the two algorithms agree on whether a chain is productive, and if the VJ is in frame. VQuest generates a lot more NA values, but only a few disagreement exist otherwise.
+```{r}
+joined %>%  replace_na(list(productive.igblast="NA")) %>% count(productive.vquest, productive.igblast) %>% ggplot(aes(x=productive.vquest, y=productive.igblast, fill=n)) + geom_tile() + scale_fill_gradient(low="lightblue1",high="darkblue",trans="log10") + geom_text(aes(label=n))
+
+joined %>%  replace_na(list(vj_in_frame.igblast="NA")) %>% count(vj_in_frame.vquest, vj_in_frame.igblast) %>% ggplot(aes(x=vj_in_frame.vquest, y=vj_in_frame.igblast, fill=n)) + geom_tile() + scale_fill_gradient(low="lightblue1",high="darkblue",trans="log10") + geom_text(aes(label=n))
+
+joined %>%  replace_na(list(stop_codon.igblast="NA")) %>% count(stop_codon.vquest, stop_codon.igblast) %>% ggplot(aes(x=stop_codon.vquest, y=stop_codon.igblast, fill=n)) + geom_tile() + scale_fill_gradient(low="lightblue1",high="darkblue",trans="log10") + geom_text(aes(label=n))
+```
+## IGBLAST finds more matches than V-QUEST 
+R console print out shows the number of NAs by each method 
+The density plot hows that (points at the x=0 or y=0 lines are segments that are note identified by one of the algorithms)
+* For the V segment igblast returns identity score <1 while VQuest returns no match. Otherwise the high identity score cells are at the top right corner
+* For the D segment, most cells are not found by either method, igblast finds more than vquest 
+* For the J segment igblast returns identity score <1 while VQuest returns no match. Otherwise the high identity score cells are at the top right corner
+Therefore we keep using the results of IGBLAST 
+```{r}
+print(c(sum(is.na(joined['v_identity.igblast'])),sum(is.na(joined['d_identity.igblast'])),sum(is.na(joined['j_identity.igblast']))))
+print(c(sum(is.na(joined['v_identity.vquest'])),sum(is.na(joined['d_identity.vquest'])),sum(is.na(joined['j_identity.vquest']))))
+joined <- joined %>% replace_na(list(v_identity.igblast=0, v_identity.vquest=0, d_identity.igblast=0, d_identity.vquest=0, j_identity.igblast=0, j_identity.vquest=0))
+
+joined %>% ggplot(aes(x=v_identity.igblast, y=v_identity.vquest)) + geom_hex() +
+  scale_fill_gradient(low="lightblue1",high="darkblue",trans="log10")
+joined %>% ggplot(aes(x=d_identity.igblast, y=d_identity.vquest)) + geom_hex() +
+  scale_fill_gradient(low="lightblue1",high="darkblue",trans="log10")
+joined %>% ggplot(aes(x=j_identity.igblast, y=j_identity.vquest)) + geom_hex() +
+  scale_fill_gradient(low="lightblue1",high="darkblue",trans="log10")
+```
+### Variable gene identification between igblast and vquest
+Table shows the percentage of disagreement if both algorithm gives a prediction 
+```{r}
+joined <- joined %>% mutate(  V_agreement = str_detect(c(fixed(v_call.igblast)), fixed(v_call.vquest))|str_detect(c(fixed(v_call.vquest)), fixed(v_call.igblast)), 
+  D_agreement = str_detect(c(fixed(d_call.igblast)), fixed(d_call.vquest))|str_detect(c(fixed(d_call.vquest)), fixed(d_call.igblast)),
+  J_agreement = str_detect(c(fixed(j_call.igblast)), fixed(j_call.vquest))|str_detect(c(fixed(j_call.vquest)), fixed(j_call.igblast)))
+
+# use the following line to check that the different types are really different 
+joined %>% filter(!V_agreement) %>% count(v_call.igblast, v_call.vquest) %>% mutate(freq=n/sum(!is.na(joined['V_agreement'])))
+joined %>% filter(!D_agreement) %>% count(d_call.igblast, d_call.vquest) %>% mutate(freq=n/sum(!is.na(joined['D_agreement'])))
+joined %>% filter(!J_agreement) %>% count(j_call.igblast, j_call.vquest) %>% mutate(freq=n/sum(!is.na(joined['J_agreement'])))
+```
+
+Bar plot shows the frequency of: agree, disagree, or if either algorithm does not finding a match 
+```{r}
+joined %>% ggplot(aes(x=V_agreement))  + geom_bar() 
+joined %>% ggplot(aes(x=D_agreement))  + geom_bar() 
+joined %>% ggplot(aes(x=J_agreement))  + geom_bar() 
+```
+
+
+# Combine CellRanger5 output and IGBLAST output
+The TCR type between CellRanger5 and IGBLAST disagree with each other 
+```{r}
+cr_igblast <- full_join(cr5, igblast, by=c("contig_id"="sequence_id.igblast"))
+cr_igblast %>% count(locus.igblast, c_gene, productive.igblast, productive) %>% arrange(desc(n))
+```
+
+The reason why igblast has very different prediction is because TRA and B are judged based on variable section and the reference for Gamma and Delta is not very good. 
+Therefore we ran blastn on the constant region of TCR, and those are identified with high confidence. Except for the difference between TRGC2 and TRGC1, c_blast and cellranger agree with each other. 
+```{r}
+cr_igblast_blast <- full_join(c_blast, cr_igblast, by=c("contig_id"="contig_id"))  
+cr_igblast_blast %>%  count(c_gene, c_blast) %>% ggplot(aes(x=c_gene, y=c_blast, fill=n)) + geom_tile()+
+  scale_fill_gradient(low="lightblue1",high="darkblue",trans="log10")
+```
+### Variable gene identification between igblast and cellranger 
+Table shows the percentage of disagreement if both algorithm gives a prediction 
+```{r}
+cr_igblast_blast <- cr_igblast_blast %>% mutate(V_agreement = str_detect(c(fixed(v_call.igblast)), fixed(v_gene))|str_detect(c(fixed(v_gene)), fixed(v_call.igblast)), 
+  D_agreement = str_detect(c(fixed(d_call.igblast)), fixed(d_gene))|str_detect(c(fixed(d_gene)), fixed(d_call.igblast)),
+  J_agreement = str_detect(c(fixed(j_call.igblast)), fixed(j_gene))|str_detect(c(fixed(j_gene)), fixed(j_call.igblast)))
+ 
+# use the following line to check that the different types are really different 
+cr_igblast_blast %>% filter(!V_agreement) %>% count(v_call.igblast, v_gene) %>% mutate(freq=n/sum(!is.na(cr_igblast_blast['V_agreement'])))
+cr_igblast_blast %>% filter(!D_agreement) %>% count(d_call.igblast, d_gene) %>% mutate(freq=n/sum(!is.na(cr_igblast_blast['D_agreement'])))
+cr_igblast_blast %>% filter(!J_agreement) %>% count(j_call.igblast, j_gene) %>% mutate(freq=n/sum(!is.na(cr_igblast_blast['J_agreement'])))
+```
+
+### Verify that A TCR must be in frame and do not have a stop codon to be productive 
+```{r}
+cr_igblast%>%count(productive.igblast, stop_codon.igblast, vj_in_frame.igblast) 
+```
+### Check that there is a partial match between the cdr3 sequence predicted by either igblast or cellranger
+There are 3666 cdr3 sequences that was only predicted by igblast and not cellranger, but out of the ones that they both predicted, most of them agree with each other
+```{r}
+cr_igblast_blast%>%  mutate(cdr3_match = str_detect(c(fixed(cdr3.igblast)), fixed(cdr3_nt))|str_detect(c(fixed(cdr3_nt)), fixed(cdr3.igblast))) %>% count(cdr3_match, is.na(cdr3.igblast), is.na(cdr3_nt))
+```
+### Check that the sequence length (in cellranger) is the same as the length of sequence (in igblast)
+There are 3666 cdr3 sequences that was only predicted by igblast and not cellranger, but out of the ones that they both predicted, most of them agree with each other
+```{r}
+sum(cr_igblast_blast%>%  mutate(len = str_length(sequence.igblast)) %>% select(len) == cr_igblast_blast['length']) ==dim(cr_igblast_blast)[1]
+```
+
+# Clean up cr_igblast and keep the relevant columns, then save the results
+```{r}
+names(cr_igblast_blast)
+ann <- cr_igblast_blast %>% select(contig_id, barcode, is_cell, high_confidence, length,v_gene,v_call.igblast,v_identity.igblast, d_call.igblast, d_identity.igblast, j_gene,j_call.igblast,j_identity.igblast, c_gene, reads, umis, sequence.igblast, stop_codon.igblast, vj_in_frame.igblast, productive.igblast, cdr3.igblast, cdr3_nt )
+write.csv(ann, file="Code/gamma-delta/results/all_contig_annotations.chenling.csv",
+          row.names=FALSE)
+```
+
+# Clonal analysis results from IGBlast 
+```{r,message=FALSE, warning=FALSE, error=FALSE,results='hide',fig.keep='all'}
+clonal <- read_delim('Code/gamma-delta/results/all_contig_igblast.clones.tsv', '\t', col_names = FALSE)
+clonal_analysis <- lapply(c(1:100), function(i){
+  clone <- str_split(clonal[i, 7], ',')[[1]]
+  clone_summary <- ann %>% filter(contig_id %in% clone) %>% count(stop_codon.igblast,vj_in_frame.igblast, productive.igblast, v_gene,v_call.igblast,v_identity.igblast, d_call.igblast, d_identity.igblast, j_gene,j_call.igblast,j_identity.igblast) %>% mutate(rank=i)
+  return(clone_summary)
+})
+clonal_analysis = bind_rows(clonal_analysis) 
+clonal_analysis %>% select(rank, stop_codon.igblast,vj_in_frame.igblast, productive.igblast, v_gene,v_call.igblast,v_identity.igblast, d_call.igblast, d_identity.igblast, j_gene,j_call.igblast,j_identity.igblast)
+write.csv(ann, file="Code/gamma-delta/results/clonal_analysis.igblast.csv",
+          row.names=FALSE)
+
+```
+
+
+
+
+
+
+
