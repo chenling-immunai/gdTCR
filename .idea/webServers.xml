@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="e6489a0f-851e-414c-9811-26e497521532" name="googleVM" url="http://localhost:8787">
+        <fileTransfer accessType="SFTP" host="dev-chenling" port="22" sshConfigId="3b567f38-ba60-458d-81f1-91810813729a" sshConfig="chenlingxu@dev-chenling:22 password">
+          <advancedOptions>
+            <advancedOptions keepAliveTimeout="0" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
